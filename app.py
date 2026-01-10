@@ -1,15 +1,6 @@
 import os
 import tempfile
 import streamlit as st
-import google.generativeai as genai     
-
-# Python 3.9 compatibility patch
-import importlib.metadata
-try:
-    importlib.metadata.packages_distributions()
-except AttributeError:
-    import importlib_metadata
-    importlib.metadata.packages_distributions = importlib_metadata.packages_distributions
 
 # Import Backend Logic
 from logic import RAGPipeline
@@ -218,6 +209,7 @@ st.markdown("""
             mask-composite: exclude;
             animation: borderRotate 3s linear infinite;
             opacity: 0.8;
+            z-index: -1;
         }
         
         @keyframes borderRotate {
