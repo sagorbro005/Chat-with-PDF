@@ -1,10 +1,14 @@
 streamlit
-langchain-google-genai
 langchain
 langchain-community
+langchain-core
+langchain-google-genai
+langchain-huggingface
+langchain-chroma
+langchain-text-splitters
 chromadb
 sentence-transformers
 pypdf
 python-dotenv
-langchain-huggingface
-langchain-chroma
+huggingface-hub>=0.27.0
+langchain-groq

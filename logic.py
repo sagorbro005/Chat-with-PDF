@@ -1,14 +1,16 @@
 import os
-import shutil
+
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.chains import create_retrieval_chain
+from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_groq import ChatGroq
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 
 load_dotenv()
 
@@ -86,32 +88,72 @@ class RAGPipeline:
             db = Chroma(persist_directory=self.persist_directory, embedding_function=self.embeddings)
             retriever = db.as_retriever(search_kwargs={"k": k})
 
-            # Initialize LLM
-            llm = ChatGoogleGenerativeAI(
-                model=model_name,
-                google_api_key=self.api_key,
-                temperature=0.2
-            )
+            # --- Model Switching Logic ---
+            if "gemini" in model_name:
+                # --- PROVIDER A: GOOGLE (Native) ---
+                llm = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=self.api_key,
+                    temperature=0.2
+                )
+            
+            elif model_name in ["Llama 3.3 70B (Groq)", "Llama 3.1 8B (Groq)"]:
+                # --- PROVIDER B: GROQ (The Speed Demon) ---
+                groq_api_key = os.getenv("GROQ_API_KEY")
+                if not groq_api_key:
+                    return None, "Groq API Key not found in environment variables."
+                
+                model_map = {
+                    "Llama 3.3 70B (Groq)": "llama-3.3-70b-versatile",
+                    "Llama 3.1 8B (Groq)": "llama-3.1-8b-instant"
+                }
+                
+                llm = ChatGroq(
+                    model_name=model_map[model_name],
+                    temperature=0,
+                    api_key=groq_api_key
+                )
+                
+            elif model_name == "Qwen 2.5 Coder (HuggingFace)":
+                # --- PROVIDER C: HUGGINGFACE (Serverless Inference) ---
+                hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+                if not hf_token:
+                    return None, "HuggingFace API Token not found in environment variables."
 
-            # Professional Prompt
+                # Initialize Endpoint (Wrapper around InferenceClient)
+                endpoint = HuggingFaceEndpoint(
+                    repo_id="Qwen/Qwen2.5-Coder-32B-Instruct",
+                    task="text-generation",
+                    max_new_tokens=512,
+                    do_sample=False,
+                    repetition_penalty=1.03,
+                    huggingfacehub_api_token=hf_token
+                )
+                
+                # Wrap in ChatHuggingFace to use the correct 'conservational' API task
+                llm = ChatHuggingFace(llm=endpoint)
+
+            else:
+                return None, "Invalid model selection."
+
+            # Professional & Detailed "Expert Consultant" Prompt
             prompt = ChatPromptTemplate.from_template("""
-            You are an expert AI analyst. Your goal is to provide a comprehensive, structured, and accurate answer based on the provided context.
-            
-            Instructions:
-            1.  **Analyze** the provided context thoroughly.
-            2.  **Structure** your answer:
-                -   **Introduction**: Briefly state what the context says about the topic.
-                -   **Key Details**: Use bullet points to list important facts, figures, or arguments found in the text.
-                -   **Conclusion**: Summarize the findings.
-            3.  **Tone**: Professional, objective, and detailed.
-            4.  **Constraints**:
-                -   Answer ONLY based on the Context.
-                -   If the answer is missing, say: "I cannot find specific information about [topic] in the provided document."
-            
-            Context:
+            You are a world-class AI Analyst and domain expert. Your goal is to provide a structured, data-driven, and highly professional answer based **exclusively** on the provided context.
+
+            ### Instructions for Excellence:
+            1.  **Direct & Concise**: Start immediately with the answer. Avoid filler phrases like "Based on the context" or "The document mentions".
+            2.  **Structure**:
+                -   **Executive Summary**: A 2-3 sentence high-level overview of the answer.
+                -   **Detailed Analysis**: Break down the answer into logical sections with clear **Markdown Headers**.
+                -   **Key Facts/Evidence**: Use **bullet points** to present data, lists, or steps for readability.
+            3.  **Tone**: Professional, authoritative, yet accessible. Avoid robotic language.
+            4.  **Formatting**: Use **BOLD** for key terms/concepts to make the text skimmable.
+            5.  **Strict Constraint**: If the answer is NOT in the context, state clearly: *"The provided documents do not contain specific information regarding [topic]."* Do not hallucinate.
+
+            ### Context Data:
             {context}
-            
-            Question:
+
+            ### User Question:
             {input}
             """)
 
@@ -124,4 +166,19 @@ class RAGPipeline:
             return response, None
 
         except Exception as e:
-            return None, str(e)
+            import traceback
+            error_details = traceback.format_exc()
+            
+            # Check for 403 Permission Error
+            if "403 Forbidden" in str(e) or "sufficient permissions" in str(e):
+                error_msg = (
+                    "**Permission Denied (403):** Your HuggingFace Token is Read-Only.\n"
+                    "1. Go to [HuggingFace Settings](https://huggingface.co/settings/tokens)\n"
+                    "2. Create/Edit Token -> Select 'Fine-grained' or 'Write' permissions.\n"
+                    "3. Enable **'Make calls to the serverless inference API'** under Inference."
+                )
+            else:
+                error_msg = f"Error: {str(e)}\nInclude this in your report."
+                
+            print(f"DEBUG EXCEPTION:\n{error_details}") 
+            return None, error_msg
