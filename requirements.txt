@@ -12,3 +12,4 @@ pypdf
 python-dotenv
 huggingface-hub>=0.27.0
 langchain-groq
+protobuf<5.0.0
